@@ -1,0 +1,121 @@
+---
+title: "Activity recognition with quantified-self devices"
+author: "Pierre Lecointre"
+date: "Friday, March 20, 2015"
+output:
+    html_document :
+        toc : true
+        keep_md : true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+# Executive summary
+
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity. These type of devices are part of the quantified-self movement,€“ a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how *much* of a particular activity they do, but they rarely quantify *how well they do it*.
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different way.
+We will try to answer this question : **can we use accelerators' data only to do activity recognition ?**
+
+After getting, exploring and tidying these data, we will prepare two datasets, one for training a model, the other one for testing it.
+We choose a *random forest* algorithm as model, and will set it up using our trainig dataset.
+We will predict the outcome of the testing dataset using this model, and will evaluate how accurate is our prediction, a way of assessing our model.
+
+More information is available from this [website](http://groupware.les.inf.puc-rio.br/har).
+
+# Getting, exploring and tidying the data
+
+## Data download
+
+Data are contained in a Comma Separated Value (csv) file, available in the cloud. To download and create the corresponding dataframe :
+
+```{r loaddata}
+download.file('http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', "pml-training.csv")
+
+OrigTraining <- read.csv("pml-training.csv", na.strings=c("NA", "#DIV/0!", ""))
+```
+
+##Exploring data
+The dataset `OrigTraing` contains `r dim(OrigTraining)[2]` variables related to each of the `r dim(OrigTraining)[1]` observations.
+Using combination of `str` and `summary` functions, it appears a lot of variables contain a high proportion of missing data (NA : Not Available).
+
+According to the litterature, it seems there is a form of consensus that variables containing more than 60% of missing data are not pertinent predictors for erecting model. So, to discard theses variables :
+```{r choix_predicat}
+predicat <- which((colSums(!is.na(OrigTraining)) >= 0.6*nrow(OrigTraining)))
+procTraining <- OrigTraining[, predicat]
+```
+The dataset `procTraing` contains now only `r dim(procTraining)[2]` variables related to each of the `r dim(procTraining)[1]` observations.
+
+Inspecting thoroughly the `proctraining` dataset, we choose to keep only the data directly related to accelerometer's output, and the `classe` variable, our output.
+So, we discard the following variables : `X`, `user_name`, `raw_timestamp_part_1`, `raw_timestamp_part_2`, `cvtd_timestamp`, `new_window`, `num_window`, and made sure our `classe` variable is of factor type :
+```{r tyding}
+procTraining <- procTraining[, -c(1:7)]
+procTraining$classe <- factor(procTraining$classe)
+```
+
+##Data slicing
+We will divide our dataset in two parts, one for training the model, the other for testing and assessing our model, with a usual ration of 60/40 %.
+We will use the `caret` package for the rest of this study :
+```{r slicing}
+library(caret)
+set.seed(31415)
+inTraining <- createDataPartition(procTraining$classe, p=0.6, list=FALSE)
+training <- procTraining[inTraining,]
+testing <- procTraining[-inTraining,]
+```
+We now have a `training` dataset of `r dim(training)[1]` observations, and a `testing` dataset of `r dim(testing)[1]` variables.
+
+#Model training
+
+We choose to use a **random forest** algorithm as model, expecting a very small out of sample error.
+
+Thanks to the forum of the *practical machine learning* MOOC from Joh Hopkins University, I discovered a way to alleviate the computer intensive cons of this method, using a cluster approach supported by the `doParallel` package.
+
+So, let's prepare our computer to use all but one of its processor's cores :
+```{r cluster_creation}
+library(parallel)
+library(doParallel)
+cl <- makeCluster(detectCores()-1)
+registerDoParallel(cl)
+ctrl <- trainControl (classProbs=TRUE, savePredictions=TRUE, allowParallel=TRUE)
+```
+
+## Random forest modelling
+We will train our model with default parameters :
+```{r rf_modelling}
+system.time(modFit <- train(classe ~ ., method="rf", data=training))
+```
+
+Stop the cluster, and display some infos regarding the model :
+```{r clusterstop}
+modFit
+```
+There is no need for cross-validation using random forest model, so we could directly apply our model to the testing set in order to predict the classe of each observation.
+
+## Predicting with random forest model
+
+Let's apply our model `modFit` to the test set `testing`, and evaluate our moedl using a confusion matrix :
+```{r predict}
+predtesting <- predict(modFit, testing)
+confusionMatrix(predtesting, testing$classe)
+```
+With an accuracy of `confusionMatrix(predtesting, testing$classe)$overall[1]`, we could say we have a very well-fitted model.
+
+##Final model
+let's display the model's variable importance :
+```{r varimpdisplay}
+varImp(modFit)
+```
+
+Some characteristics of our model :
+```{r finalmodel}
+modFit$finalModel
+```
+So, the OOB estimate of error rate is less than 1%, confirming the validity of our model.
+
+#Conclusion
+Using a random forest algorithm, we were able to erect a model able to do, with great confidence, activity recognition based on accelerometers data.
+However, this model may be qualified of a "heavy" one, using 52 predictors.
+Next step would be to try to refine it, reducing the number of predictors, by boosting techniques, for example.
+
